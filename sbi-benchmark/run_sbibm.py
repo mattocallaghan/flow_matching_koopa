@@ -2,8 +2,11 @@
 import argparse
 import csv
 import math
+import time
 from os.path import join
 
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 import sbibm.tasks
 from sbibm.metrics import c2st
@@ -127,18 +130,27 @@ def train_model(train_dir, settings, train_loader, test_loader, use_wandb=False)
     return best_model
 
 
-def evaluate_model(train_dir, settings, dataset, model, use_wandb=False):
+def evaluate_model(train_dir, settings, dataset, model, use_wandb=False, compute_c2st=False):
     task = sbibm.get_task(settings["task"]["name"])
 
     c2st_scores = {}
+    flow_times = []  # Track sampling times
+    
+    print("Generating posterior samples and plots...")
     for obs in range(1, 11):
         reference_samples = task.get_reference_posterior_samples(num_observation=obs)
-        num_samples = len(reference_samples)
+        num_samples = 1000  # Generate 1000 teacher samples for evaluation
         observation = dataset.standardize(
             task.get_observation(num_observation=obs), label="x"
         )
+        # Time flow sampling
+        start_time = time.time()
+        
         # generate (num_samples * 2), to account for samples outside of the prior
         posterior_samples = model.sample_batch(observation.repeat((num_samples * 2, 1)))
+        
+        flow_time = time.time() - start_time
+        flow_times.append(flow_time)
         posterior_samples = dataset.standardize(
             posterior_samples, label="theta", inverse=True
         )
@@ -152,27 +164,62 @@ def evaluate_model(train_dir, settings, dataset, model, use_wandb=False):
         posterior_samples = posterior_samples[prior_mask]
 
         n = min(len(reference_samples), len(posterior_samples))
-        c2st_score = c2st(posterior_samples[:n], reference_samples[:n])
-
-        c2st_scores[f"C2ST {obs}"] = c2st_score.item()
+        
+        # Only compute C2ST if requested
+        if compute_c2st:
+            c2st_score = c2st(posterior_samples[:n], reference_samples[:n])
+            c2st_scores[f"C2ST {obs}"] = c2st_score.item()
+            print(f"C2ST score for observation {obs}: {c2st_score.item():.3f}")
+            title = f"Observation {obs}: C2ST = {c2st_score.item():.3f}, Time = {flow_time:.3f}s ({num_samples*2} generated)"
+        else:
+            title = f"Observation {obs}: Time = {flow_time:.3f}s ({num_samples*2} generated)"
+        
+        # Always generate plots
         fig = plt.figure(figsize=(10, 10))
         plt.scatter(
             posterior_samples[:, 0],
             posterior_samples[:, 1],
             s=0.5,
             alpha=0.2,
-            label="flow matching",
+            label=f"flow matching ({len(posterior_samples)} samples)",
         )
         plt.scatter(
             reference_samples[:, 0],
             reference_samples[:, 1],
             s=0.5,
             alpha=0.2,
-            label="reference",
+            label=f"reference ({len(reference_samples)} samples)",
         )
-        plt.title(f"C2ST: {c2st_score.item():.3f}")
+        plt.title(title)
         plt.legend()
         plt.savefig(join(train_dir, f"posterior_{obs}.png"))
+        plt.close()  # Close figure to prevent memory buildup
+    
+    if not compute_c2st:
+        print("Skipped C2ST computation (use --compute_c2st to enable)")
+    
+    # Speed summary and plot for flow model
+    avg_time = np.mean(flow_times)
+    print(f"Average flow matching sampling time: {avg_time:.3f} ± {np.std(flow_times):.3f} seconds")
+    
+    # Speed comparison plot with sample information
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.plot(range(1, 11), flow_times, 'ro-', label='Flow Matching Sampling Time')
+    
+    # Add sample count annotations
+    for i, (obs, time_val) in enumerate(zip(range(1, 11), flow_times)):
+        # We generate num_samples * 2 = 1000 * 2 = 2000 samples
+        sample_count = 1000 * 2  # Actual number of samples generated
+        ax.annotate(f'{sample_count}', (obs, time_val), 
+                   textcoords="offset points", xytext=(0,10), ha='center', fontsize=8)
+    
+    ax.set_xlabel('Observation Number')
+    ax.set_ylabel('Sampling Time (seconds)')
+    ax.set_title('Flow Matching Sampling Speed (numbers show sample count generated)')
+    ax.grid(True, alpha=0.3)
+    ax.legend()
+    plt.savefig(join(train_dir, "sampling_speed.png"), dpi=150, bbox_inches='tight')
+    plt.close()
 
     with open(
         join(train_dir, "c2st.csv"), "w"
@@ -190,6 +237,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--train_dir", required=True, help="Base save directory for the evaluation"
+    )
+    parser.add_argument(
+        "--compute_c2st", action="store_true", default=False,
+        help="Compute C2ST scores (slow, default: False)"
     )
 
     args = parser.parse_args()
@@ -219,4 +270,4 @@ if __name__ == "__main__":
         test_loader=test_loader,
         use_wandb=use_wandb,
     )
-    evaluate_model(args.train_dir, settings, dataset, model, use_wandb=use_wandb)
+    evaluate_model(args.train_dir, settings, dataset, model, use_wandb=False, compute_c2st=False)

@@ -1,0 +1,93 @@
+# Koopman Model Settings for Two Moons SBI Task
+#
+# This configuration trains a Koopman student model using a pre-trained 
+# flow matching teacher on the two_moons benchmark task.
+
+model:
+  type: koopman_sbi  # Registered Koopman model type
+  
+  # Teacher model configuration
+  teacher_model_path: "teacher_two_moons/best_model.pt"  # Path to trained teacher
+  
+  # Koopman-specific hyperparameters
+  lifted_dim: 256          # Dimension of Koopman lifting space (increased for better capacity)
+  buffer_size: 30000         # Buffer size for (theta_0, theta_1) pairs (10000 obs × 3 samples = 30000)
+  hidden_dims: [124,256,256,256,124]  # Hidden layer dimensions for Koopman networks
+  
+  # Loss weights (from Koopman paper)
+  lambda_phase: 1.0       # Phase loss: ||e^L * g(0,x0) - g(1,x1)||²
+  lambda_target: 1.0      # Target loss: ||decoder(e^L * g(0,x0)) - x1||²
+  lambda_recon: 1.0       # Reconstruction loss: ||decoder(g(1,x1)) - x1||²
+  lambda_cons: 0.0        # Disable consistency loss
+  
+  # Flow matching base configuration (inherited from parent class)
+model:
+  posterior_kwargs:
+    activation: gelu
+    batch_norm: false
+    context_with_glu: false
+    dropout: 0.0
+    hidden_dims:
+    - 64
+    - 256
+    - 4096
+    - 256
+    - 64
+    sigma_min: 0.0001
+    theta_with_glu: false
+    time_prior_exponent: 4
+    type: DenseResidualNet
+  type: flow_matching
+
+# SBI task configuration (same as original)
+task:
+  name: two_moons
+  num_train_samples: 10000   # Match flow training dataset size
+
+# Training configuration
+training:
+  batch_size: 128           # Larger batch size for stability
+  early_stopping: true
+  epochs: 200               # Match flow training epochs
+  num_workers: 0
+  device: cpu               # Use CPU for compatibility
+  train_fraction: 0.9
+  
+  optimizer:
+    lr: 0.001               # Lower learning rate for student training
+    type: adam
+    weight_decay: 1e-5      # Small regularization
+    
+  scheduler:
+    factor: 0.5             # More aggressive learning rate reduction
+    patience: 5             # Reduce LR if no improvement for 5 epochs
+    type: reduce_on_plateau
+    
+  # Optional wandb logging (disabled)
+  # wandb:
+  #   project: "koopman-sbi"
+  #   entity: null
+  #   tags: ["koopman", "two_moons", "sbi"]
+  #   notes: "Koopman student model for two_moons benchmark"
+
+# Koopman-specific training options
+koopman:
+  # Pre-generated dataset parameters
+  samples_per_observation: 30      # Number of (noise, flow_sample) pairs per observation when generating dataset
+  
+  # Legacy parameters (no longer used with pre-generated datasets)
+  # buffer_source: "data"           # Use actual training data instead of teacher sampling
+  # buffer_update_frequency: 0.1    # 10% of batches
+  # teacher_samples_per_context: 20  # Samples per observation for buffer
+  
+  # Matrix exponential settings
+  matrix_exp_taylor_order: 8      # Taylor series order for matrix exp
+  
+  # Evaluation settings
+  evaluate_speed: true            # Time sampling during evaluation
+  plot_posteriors: true           # Create posterior comparison plots
+  
+  # Early stopping based on validation loss
+  early_stopping:
+    patience: 15
+    min_delta: 1e-5
