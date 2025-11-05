@@ -30,6 +30,7 @@ training:
   early_stopping: true
   epochs: 100
   num_workers: 0
+  device: cuda
   optimizer:
     lr: 0.0002
     type: adam

@@ -99,10 +99,22 @@ def train_koopman_model(train_dir, settings, train_loader, test_loader, use_wand
     total_params = 0
     total_params += sum(p.numel() for p in model.encoder.parameters())
     total_params += sum(p.numel() for p in model.decoder.parameters())
-    # Linear evolution parameters
-    total_params += sum(p.numel() for p in model.linear_evolution.parameters())
-    # Conditional control network
-    total_params += sum(p.numel() for p in model.control_linear.parameters())
+    
+    # Evolution parameters based on method
+    if model.use_matrix_exponential:
+        # Conditional networks for matrix exponential parameters
+        if hasattr(model, 'alpha_net'):
+            total_params += sum(p.numel() for p in model.alpha_net.parameters())
+        if hasattr(model, 'beta_net'):
+            total_params += sum(p.numel() for p in model.beta_net.parameters())
+        if hasattr(model, 'Agt_net'):
+            total_params += sum(p.numel() for p in model.Agt_net.parameters())
+        if hasattr(model, 'bg_net'):
+            total_params += sum(p.numel() for p in model.bg_net.parameters())
+    else:
+        # Linear evolution parameters
+        if hasattr(model, 'linear_evolution'):
+            total_params += sum(p.numel() for p in model.linear_evolution.parameters())
     
     logger.info(f"Created Koopman model with {total_params} parameters")
     
@@ -111,19 +123,27 @@ def train_koopman_model(train_dir, settings, train_loader, test_loader, use_wand
     model.scheduler_kwargs = settings["training"]["scheduler"]
     model.initialize_optimizer_and_scheduler()
     
-    # Load pre-generated Koopman dataset
-    logger.info("Loading pre-generated Koopman dataset")
-    
-    dataset_path = os.path.join(train_dir, "koopman_dataset.pt")
-    if not os.path.exists(dataset_path):
-        raise FileNotFoundError(f"Pre-generated Koopman dataset not found at {dataset_path}")
-    
-    koopman_data = torch.load(dataset_path)
-    logger.info(f"Loaded Koopman dataset with {len(koopman_data['theta_0'])} triplets")
-    logger.info(f"Dataset parameters: buffer_size={koopman_data['buffer_size']}, samples_per_observation={koopman_data['samples_per_observation']}")
-    
-    # Initialize model with pre-generated dataset
-    model.load_koopman_dataset(koopman_data)
+    # Initialize model data based on mode
+    if not settings["model"].get("teacher_mode", True):
+        # Direct flow matching mode - no pre-generated dataset needed
+        logger.info("Using direct flow matching mode - generating data on the fly")
+        # No additional initialization needed - data will be generated during training
+        
+    else:
+        # Teacher mode - try to load pre-generated dataset
+        logger.info("Teacher mode - loading pre-generated Koopman dataset")
+        
+        dataset_path = os.path.join(train_dir, "koopman_dataset.pt")
+        if os.path.exists(dataset_path):
+            koopman_data = torch.load(dataset_path)
+            logger.info(f"Loaded Koopman dataset with {len(koopman_data['theta_0'])} triplets")
+            logger.info(f"Dataset parameters: buffer_size={koopman_data['buffer_size']}, samples_per_observation={koopman_data['samples_per_observation']}")
+            
+            # Initialize model with pre-generated dataset
+            model.load_koopman_dataset(koopman_data)
+        else:
+            logger.warning(f"Pre-generated Koopman dataset not found at {dataset_path}")
+            logger.info("Will use buffer-based training with teacher model")
     
     # Training loop
     runtime_limits = RuntimeLimits(
@@ -288,8 +308,8 @@ def main():
     parser = argparse.ArgumentParser(description='Train Koopman SBI model')
     parser.add_argument('--train_dir', required=True,
                        help='Directory to save training outputs')
-    parser.add_argument('--teacher_model_path', required=True,
-                       help='Path to pre-trained teacher model')
+    parser.add_argument('--teacher_model_path', required=False,
+                       help='Path to pre-trained teacher model (required for teacher_mode=True)')
     parser.add_argument('--settings_file', default=None,
                        help='Settings YAML file (if not in train_dir)')
     parser.add_argument('--device', default=None,
@@ -308,19 +328,27 @@ def main():
     with open(settings_path, 'r') as f:
         settings = yaml.safe_load(f)
     
-    # Override teacher model path
-    settings["model"]["teacher_model_path"] = args.teacher_model_path
+    # Override teacher model path if provided
+    if args.teacher_model_path:
+        settings["model"]["teacher_model_path"] = args.teacher_model_path
     
     # Override device if specified
     if args.device:
         settings["training"]["device"] = args.device
     
-    # Verify teacher model exists
-    if not os.path.exists(args.teacher_model_path):
-        logger.error(f"Teacher model not found: {args.teacher_model_path}")
-        sys.exit(1)
+    # Check teacher mode requirements
+    teacher_mode = settings["model"].get("teacher_mode", True)
+    if teacher_mode:
+        if not args.teacher_model_path:
+            logger.error("--teacher_model_path is required when teacher_mode=True")
+            sys.exit(1)
+        if not os.path.exists(args.teacher_model_path):
+            logger.error(f"Teacher model not found: {args.teacher_model_path}")
+            sys.exit(1)
+        logger.info(f"Teacher mode: Using teacher model {args.teacher_model_path}")
+    else:
+        logger.info("Direct flow matching mode: No teacher model required")
     
-    logger.info(f"Teacher model: {args.teacher_model_path}")
     logger.info(f"Settings: {settings_path}")
     logger.info(f"Output directory: {args.train_dir}")
     

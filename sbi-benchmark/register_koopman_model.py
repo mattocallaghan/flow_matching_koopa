@@ -82,7 +82,10 @@ def create_koopman_sbi_model(settings_dict: dict, device: str = 'cpu'):
         'lambda_target': model_config.get('lambda_target', 1.0),
         'lambda_recon': model_config.get('lambda_recon', 1.0),
         'lambda_cons': model_config.get('lambda_cons', 0.1),
-        'buffer_size': model_config.get('buffer_size', 5000)
+        'use_matrix_exponential': model_config.get('use_matrix_exponential', False),
+        'buffer_size': model_config.get('buffer_size', 5000),
+        'teacher_mode': model_config.get('teacher_mode', True),
+        'sigma_min': model_config.get('sigma_min', 0.0001)
     }
     
     # Standard dingo parameters

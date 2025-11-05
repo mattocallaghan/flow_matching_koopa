@@ -1,23 +1,22 @@
-# Koopman Model Settings for Two Moons SBI Task
+# Koopman Model Settings for Two Moons SBI Task (Teacher Mode)
 #
-# This configuration trains a Koopman model for the two_moons benchmark task.
-# Two modes available:
-# - teacher_mode: false (default) - Use direct flow matching, no pre-trained teacher needed
-# - teacher_mode: true  - Use pre-trained flow matching teacher (legacy mode)
+# This configuration trains a Koopman student model using a pre-trained 
+# flow matching teacher on the two_moons benchmark task.
+# This is the legacy teacher mode configuration.
 
 model:
   type: koopman_sbi  # Registered Koopman model type
   
-  # Mode configuration
-  teacher_mode: false       # If true, use pre-trained teacher; if false, use direct flow matching
-  teacher_model_path: "teacher_two_moons/best_model.pt"  # Path to trained teacher (only for teacher_mode=true)
+  # Mode configuration (teacher mode)
+  teacher_mode: true        # Use pre-trained teacher model
+  teacher_model_path: "teacher_two_moons/best_model.pt"  # Path to trained teacher
   
-  # Flow matching parameters (for direct mode)
+  # Flow matching parameters
   sigma_min: 0.0001        # Minimum noise level for flow matching scheduler
   
   # Koopman-specific hyperparameters
   lifted_dim: 64          # Dimension of Koopman lifting space (must be even for block-diagonal structure)
-  buffer_size: 10000       # Buffer size for (theta_0, theta_1) pairs (legacy for teacher mode)
+  buffer_size: 10000       # Buffer size for (theta_0, theta_1) pairs (10000 obs × 3 samples = 30000)
   hidden_dims: [124,124]   # Hidden layer dimensions for Koopman networks
   use_matrix_exponential: true   # Use matrix exponential (true) or linear layer (false) for evolution
   
@@ -55,7 +54,7 @@ training:
   early_stopping: true
   epochs: 200               # Match flow training epochs
   num_workers: 0
-  device: cpu               # Use CPU (change to cuda if GPU available)
+  device: cuda              # Use CUDA for GPU acceleration
   train_fraction: 0.9
   
   optimizer:
